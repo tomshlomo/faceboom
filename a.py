@@ -24,7 +24,14 @@ def get_coords(x):
     if not success:
         return 0
     results = face_mesh.process(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
-    return results.multi_face_landmarks[0].landmark[0].x, results.multi_face_landmarks[0].landmark[0].y
+    nose_x = results.multi_face_landmarks[0].landmark[2].x
+    nose_y = results.multi_face_landmarks[0].landmark[2].y
+    upper_lip_x = results.multi_face_landmarks[0].landmark[0].x
+    upper_lip_y = results.multi_face_landmarks[0].landmark[0].y
+    bottom_lip_x = results.multi_face_landmarks[0].landmark[17].x
+    bottom_lip_y = results.multi_face_landmarks[0].landmark[17].y
+    
+    return [nose_x, nose_y, upper_lip_x, upper_lip_y, bottom_lip_x, bottom_lip_y]
     
 def get_coords_from_img(image):
     # success, image = cap.read()

@@ -1,6 +1,6 @@
 #![warn(clippy::pedantic)]
 use std::str::FromStr;
-
+use std::fmt;
 use pyo3::prelude::*;
 
 use bracket_lib::prelude::*;
@@ -42,7 +42,7 @@ impl Player {
 
 struct Food {
     pos: PointF,
-}
+}   
 
 impl Food {
     fn new(pos: PointF) -> Self {
@@ -79,14 +79,56 @@ enum GameMode {
     End,
 }
 
+struct FaceLandMarks {
+    nose: PointF,
+    bottom_lip: PointF,
+    upper_lip: PointF,
+}
+
+impl FaceLandMarks {
+    fn default() -> FaceLandMarks {
+        FaceLandMarks { 
+            nose: PointF::new(0.0, 0.0),
+            bottom_lip: PointF::new(0.0, 0.0),
+            upper_lip: PointF::new(0.0, 0.0),
+         }
+    }
+    fn from_webcam() -> Option<FaceLandMarks> {
+        let res2: PyResult<[f32; 6]> = Python::with_gil(|py| {
+            let builtins = PyModule::import(py, "a")?;
+            let total: [f32; 6] = builtins.getattr("get_coords")?.call1((32.0 as f64,))?.extract()?;
+            Ok(total)
+        });
+        match res2 {
+            Ok(x) => Some(FaceLandMarks{
+                nose: PointF::new(x[0], x[1]),
+                upper_lip: PointF::new(x[2], x[3]),
+                bottom_lip: PointF::new(x[4], x[5]),
+            }),
+            _ => None,
+        }
+    }
+
+    fn mouth_height(&self) -> f32 {
+        (self.upper_lip - self.bottom_lip).mag_sq()
+    }
+    
+}
+
+impl fmt::Display for FaceLandMarks {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+      write!(f, "mouth_height: {:.3},  upper_lip: ({:.2}, {:.2}), bottom_lip: ({:.2}, {:.2}), nose: ({:.2}, {:.2})",
+      self.mouth_height(), self.upper_lip.x, self.upper_lip.y, self.bottom_lip.x, self.bottom_lip.y, self.nose.x, self.nose.y)
+    }
+}
+
 struct State {
     player: Player,
     food: Food,
     frame_time: f32,
     mode: GameMode,
     score: i32,
-    x_image_0: f64,
-    y_image_0: f64,
+    face_landmarks_ref: FaceLandMarks,
 }
 
 impl State {
@@ -97,8 +139,7 @@ impl State {
             mode: GameMode::Menu,
             food: Food::new(PointF::new(50.0, 25.0)),
             score: 0,
-            x_image_0: 0.0,
-            y_image_0: 0.0,
+            face_landmarks_ref: FaceLandMarks::default(),
         }
     }
 
@@ -109,10 +150,9 @@ impl State {
         self.mode = GameMode::Playing;
         self.score = 0;
         loop {
-            match self.get_nose_image_pos() {
-                Some((x, y)) => {
-                    self.x_image_0 = x;
-                    self.y_image_0 = y;
+            match FaceLandMarks::from_webcam() {
+                Some(face_landmarks) => {
+                    self.face_landmarks_ref = face_landmarks;
                     break;
                 }
                 None => {},
@@ -150,34 +190,17 @@ impl State {
             }
         }
     }
-
-    fn get_nose_image_pos(&mut self) -> Option<(f64, f64)> {
-        let res2: PyResult<(f64, f64)> = Python::with_gil(|py| {
-            let builtins = PyModule::import(py, "a")?;
-            let total: (f64, f64) = builtins.getattr("get_coords")?.call1((32.0 as f64,))?.extract()?;
-            Ok(total)
-        });
-        match res2 {
-            Ok(x) => Some(x),
-            _ => None,
-        }
-        // res2.unwrap()
-        // let (x, y) = res2.unwrap();
-        // PointF::new((x * (SCREEN_WIDTH as f64)) as i32, (y * (SCREEN_HEIGHT as f64)) as i32)
-    }
     
-    fn get_nose_game_pos(&mut self, x: f64, y: f64) -> PointF {
+    fn get_nose_game_pos(&mut self, nose_image_pos: PointF) -> PointF {
         // x = x - self.nose_image_x0;
-        let x_offset = -0.07;
-        let a_x = SCREEN_WIDTH as f64 / (2.0 * x_offset);
-        let b_x = SCREEN_WIDTH as f64 / 2.0 - a_x * self.x_image_0;
-        let x_game = (a_x * x + b_x).clamp(0.0, SCREEN_WIDTH as f64);
-        let y_offset = 0.1;
-        let a_y = SCREEN_WIDTH as f64 / (2.0 * y_offset);
-        let b_y = SCREEN_WIDTH as f64 / 2.0 - a_y * self.y_image_0;
-        let y_game = (a_y * y + b_y).clamp(0.0, SCREEN_HEIGHT as f64);
+        let scale = PointF::new(-0.07, 0.1);
+        let screen = PointF::new(SCREEN_WIDTH as f32, SCREEN_HEIGHT as f32);
 
-        PointF::new(x_game as f32,  y_game as f32)
+        let a = screen / (2.0 * scale);
+        let b = screen / 2.0 - a * self.face_landmarks_ref.nose;
+        let mut nose_game_pos = a * nose_image_pos + b;
+        nose_game_pos.clamp(PointF::zero(), screen);
+        nose_game_pos
     }
 
     fn play(&mut self, ctx: &mut BTerm) {
@@ -188,12 +211,12 @@ impl State {
         self.food.render(ctx);
         ctx.set_active_console(0);
         // let mouse_pos = INPUT.lock().mouse_tile(0);
-        let nose_pos = self.get_nose_image_pos();
-        let display_str = match nose_pos {
-            Some((x_img, y_img)) => {
-                let mouse_pos = self.get_nose_game_pos(x_img, y_img);
+        let face_landmarks_opt = FaceLandMarks::from_webcam();
+        let display_str = match face_landmarks_opt {
+            Some(face_landmarks) => {
+                let mouse_pos = self.get_nose_game_pos(face_landmarks.nose);
                 self.player.move_(mouse_pos);
-                format!("Nose: {:.3}, {:.3}", x_img, y_img)
+                format!("{}", face_landmarks)
             },
             None => {
                 String::from_str("No nose found!").unwrap()
