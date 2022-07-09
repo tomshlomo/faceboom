@@ -1,48 +1,74 @@
 #![warn(clippy::pedantic)]
+use std::str::FromStr;
+
 use pyo3::prelude::*;
 
 use bracket_lib::prelude::*;
 
-const SCREEN_WIDTH: i32 = 80;
-const SCREEN_HEIGHT: i32 = 50;
+const SCREEN_WIDTH: f32 = 80.0;
+const SCREEN_HEIGHT: f32 = 50.0;
 const FRAME_DURATION: f32 = 25.0;
+const DRAGON_FRAMES : [u16; 6] = [ 64, 1, 2, 3, 2, 1 ];
+const FOOD_FRAMES : [u16; 1] = [ 4 ];
 
 struct Player {
-    pos: Point,
+    pos: PointF,
 }
 
 impl Player {
-    fn new(point: Point) -> Self {
-        Player { pos: point }
+    fn new(pos: PointF) -> Self {
+        Player { pos: pos }
     }
 
-    fn move_(&mut self, point: Point) {
-        self.pos = point;
+    fn move_(&mut self, pos: PointF) {
+        self.pos = pos;
     }
 
     fn render(&self, ctx: &mut BTerm) {
-        ctx.set(self.pos.x, self.pos.y, YELLOW, BLACK, to_cp437('@'));
+        // ctx.set_active_console(1);
+        ctx.set_fancy(
+            self.pos,
+            1000000,
+            Degrees::new(0.0),
+            PointF::new(2.0, 2.0),
+            WHITE,
+            NAVY,
+            DRAGON_FRAMES[0],
+        );
+        // ctx.set_active_console(0);
+        // ctx.set(self.pos.x, self.pos.y, YELLOW, BLACK, to_cp437('@'));
     }
 }
 
 struct Food {
-    pos: Point,
+    pos: PointF,
 }
 
 impl Food {
-    fn new(point: Point) -> Self {
-        Food { pos: point }
+    fn new(pos: PointF) -> Self {
+        Food { pos: pos }
     }
 
     fn render(&self, ctx: &mut BTerm) {
-        ctx.set(self.pos.x, self.pos.y, RED, BLACK, to_cp437('*'));
+        // ctx.set_active_console(1);
+        ctx.set_fancy(
+            self.pos,
+            1,
+            Degrees::new(0.0),
+            PointF::new(2.0, 2.0),
+            RED,
+            NAVY,
+            FOOD_FRAMES[0],
+        );
+        // ctx.set_active_console(0);
+        // ctx.set(self.pos.x, self.pos.y, RED, BLACK, to_cp437('*'));
     }
 
     fn respawn() -> Food {
         let mut random = RandomNumberGenerator::new();
-        Food::new(Point::new(
-            random.range(0, SCREEN_WIDTH),
-            random.range(0, SCREEN_HEIGHT),
+        Food::new(PointF::new(
+            random.range(0.0, SCREEN_WIDTH),
+            random.range(0.0, SCREEN_HEIGHT),
         ))
     }
 }
@@ -66,10 +92,10 @@ struct State {
 impl State {
     fn new() -> Self {
         State {
-            player: Player::new(Point::new(25, 25)),
+            player: Player::new(PointF::new(25.0, 25.0)),
             frame_time: 0.0,
             mode: GameMode::Menu,
-            food: Food::new(Point::new(50, 25)),
+            food: Food::new(PointF::new(50.0, 25.0)),
             score: 0,
             x_image_0: 0.0,
             y_image_0: 0.0,
@@ -77,12 +103,21 @@ impl State {
     }
 
     fn restart(&mut self) {
-        self.player = Player::new(Point::new(25, 25));
-        self.food = Food::new(Point::new(50, 25));
+        self.player = Player::new(PointF::new(25.0, 25.0));
+        self.food = Food::new(PointF::new(50.0, 25.0));
         self.frame_time = 0.0;
         self.mode = GameMode::Playing;
         self.score = 0;
-        (self.x_image_0, self.y_image_0) = self.get_nose_image_pos();
+        loop {
+            match self.get_nose_image_pos() {
+                Some((x, y)) => {
+                    self.x_image_0 = x;
+                    self.y_image_0 = y;
+                    break;
+                }
+                None => {},
+            }
+        }
     }
 
     fn main_menu(&mut self, ctx: &mut BTerm) {
@@ -116,18 +151,22 @@ impl State {
         }
     }
 
-    fn get_nose_image_pos(&mut self) -> (f64, f64) {
+    fn get_nose_image_pos(&mut self) -> Option<(f64, f64)> {
         let res2: PyResult<(f64, f64)> = Python::with_gil(|py| {
             let builtins = PyModule::import(py, "a")?;
             let total: (f64, f64) = builtins.getattr("get_coords")?.call1((32.0 as f64,))?.extract()?;
             Ok(total)
         });
-        res2.unwrap()
+        match res2 {
+            Ok(x) => Some(x),
+            _ => None,
+        }
+        // res2.unwrap()
         // let (x, y) = res2.unwrap();
-        // Point::new((x * (SCREEN_WIDTH as f64)) as i32, (y * (SCREEN_HEIGHT as f64)) as i32)
+        // PointF::new((x * (SCREEN_WIDTH as f64)) as i32, (y * (SCREEN_HEIGHT as f64)) as i32)
     }
     
-    fn get_nose_game_pos(&mut self, x: f64, y: f64) -> Point {
+    fn get_nose_game_pos(&mut self, x: f64, y: f64) -> PointF {
         // x = x - self.nose_image_x0;
         let x_offset = -0.07;
         let a_x = SCREEN_WIDTH as f64 / (2.0 * x_offset);
@@ -138,23 +177,35 @@ impl State {
         let b_y = SCREEN_WIDTH as f64 / 2.0 - a_y * self.y_image_0;
         let y_game = (a_y * y + b_y).clamp(0.0, SCREEN_HEIGHT as f64);
 
-        Point::new(x_game as i32,  y_game as i32)
+        PointF::new(x_game as f32,  y_game as f32)
     }
 
     fn play(&mut self, ctx: &mut BTerm) {
         ctx.cls_bg(NAVY);
-        // let mouse_pos = INPUT.lock().mouse_tile(0);
-        let (x_img, y_img) = self.get_nose_image_pos();
-        let mouse_pos = self.get_nose_game_pos(x_img, y_img);
-        self.player.move_(mouse_pos);
+        ctx.set_active_console(1);
+        ctx.cls();
         self.player.render(ctx);
         self.food.render(ctx);
-        if self.player.pos == self.food.pos {
+        ctx.set_active_console(0);
+        // let mouse_pos = INPUT.lock().mouse_tile(0);
+        let nose_pos = self.get_nose_image_pos();
+        let display_str = match nose_pos {
+            Some((x_img, y_img)) => {
+                let mouse_pos = self.get_nose_game_pos(x_img, y_img);
+                self.player.move_(mouse_pos);
+                format!("Nose: {:.3}, {:.3}", x_img, y_img)
+            },
+            None => {
+                String::from_str("No nose found!").unwrap()
+            },
+        };
+        let d = (self.player.pos - self.food.pos).mag_sq();
+        if d <= 10.0 {
             self.score += 1;
             self.food = Food::respawn();
         }
 
-        ctx.print(0, 1, &format!("Score: {}, nose: {}, {}", self.score, x_img, y_img)); // (4)
+        ctx.print(0, 1, &format!("Score: {}, {}", self.score, display_str)); // (4)
     }
 }
 
@@ -169,7 +220,14 @@ impl GameState for State {
 }
 
 fn main()  -> BError {
-    let context = BTermBuilder::simple80x50().with_title("Snale").build()?;
+    let context = BTermBuilder::new()
+        .with_font("../resources/flappy32.png", 32, 32)
+        .with_simple_console(SCREEN_WIDTH as i32, SCREEN_HEIGHT as i32, "../resources/flappy32.png")
+        .with_fancy_console(SCREEN_WIDTH as i32, SCREEN_HEIGHT as i32, "../resources/flappy32.png")
+        .with_title("FaceBoom")
+        .with_tile_dimensions(16, 16)
+        .build()?;
+    // let context = BTermBuilder::simple80x50().with_title("Snale").build()?;
 
     main_loop(context, State::new())
 }

@@ -4,9 +4,6 @@
 			"path": "."
 		},
 		{
-			"path": "../dlib_playground"
-		},
-		{
 			"path": "../pyo3games"
 		},
 		{
