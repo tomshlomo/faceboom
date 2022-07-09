@@ -1,0 +1,17 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../dlib_playground"
+		},
+		{
+			"path": "../pyo3games"
+		},
+		{
+			"path": "../flappy_dragon"
+		}
+	],
+	"settings": {}
+}
